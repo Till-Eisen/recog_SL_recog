@@ -1,5 +1,7 @@
-# Recognise a classical simple central quotient from an absolutely irreducible
-# matrix group G and its group parameter q.
+# Identify G/Z(G) from an absolutely irreducible matrix group G.
+# Assume G/Z(G) is a projective classical simple group with parameter q.
+# This assumption is not checked. If it does not hold, an incorrect name
+# may be returned with status "probable".
 #
 # This file's authors include Till Eisenbrand.
 #
@@ -9,8 +11,17 @@
 # Input: G is an absolutely irreducible matrix group with a classical simple
 #   central quotient in defining characteristic p, q=p^f is its group parameter.
 #   The coefficient field of G may be a different finite field of characteristic p.
-# Output: A record with name, status and candidates.
-# A unique result is "probable", otherwise the status is "inconclusive".
+# Output: a record with fields
+#   name         probable name of G/Z(G), or fail
+#   status       "probable" for one witnessed candidate, else "inconclusive"
+#   candidates   remaining candidate names
+#   elements     witnesses of successful PPD or special order tests
+#
+# Each witness contains el (element with memory) and ppds (indices k for
+# which an odd PPD of p^k-1 divides its projective order).
+# When computed, it also contains charpoly (characteristic polynomial),
+# factors (irreducible factors with multiplicities) and projectiveOrder
+# (order modulo scalar matrices).
 # Names L, U, S, O, O+, O- denote simple quotients.
 #
 #
@@ -26,7 +37,6 @@
 #    degrees, as suggested by Frank Luebeck.
 #  - Extend the reuse of computed information, including characteristic
 #    polynomials, irreducible factors and projective orders.
-#  - Return useful intermediate results, including witnesses for PPD tests.
 #  - Derive sample budgets from a requested error bound rather than choosing
 #    them heuristically. The current budgets may be unnecessarily large.
 #  - Use better names for functions.
@@ -36,6 +46,27 @@
 #    expensive steps and choose a more efficient testing order.
 
 
+
+RECOG.ClassicalGrayboxSample := function(data)
+    local g, pol, sample;
+    g := Next(data.random);
+    pol := CharacteristicPolynomial(data.field,data.field,StripMemory(g));
+    sample := rec(el := g, polynomial := pol,
+        factors := Factors(PolynomialRing(data.field),pol), ppds := []);
+    sample.degrees := Set(sample.factors,Degree);
+    Add(data.samples,sample);
+    return sample;
+end;
+
+RECOG.ClassicalGrayboxOrderSample := function(data)
+    local g, sample;
+    g := Next(data.random);
+    sample := rec(el := g,
+        projectiveOrder := RECOG.ProjectiveOrder(StripMemory(g)),
+        ppds := []);
+    Add(data.orderSamples,sample);
+    return sample;
+end;
 
 # Input: sample contains g's characteristic polynomial over GF(Q), its distinct
 #   factor degrees and ppds (stored results); k > 0 is the PPD index.
@@ -109,7 +140,7 @@ end;
 # Output: true if found; false if not found within the budget (not a proof);
 #   fail if p^k-1 has no odd primitive prime divisor for some requested k.
 RECOG.FindPPD := function(data, indices, budget)
-    local key, search, sample, position, k, found, part, g, pol;
+    local key, search, sample, position, k, found, part;
     indices := Set(indices);
     for k in indices do
         part := PrimitivePrimeDivisors(k, data.p).ppds;
@@ -130,11 +161,7 @@ RECOG.FindPPD := function(data, indices, budget)
     while search.checked < budget do
         position := search.checked+1;
         if position > Length(data.samples) then
-            g := PseudoRandom(data.group);
-            pol := CharacteristicPolynomial(data.field,data.field,g);
-            sample := rec(polynomial := pol, degrees := Set(Factors(PolynomialRing(data.field),pol),Degree),
-                ppds := []);
-            Add(data.samples,sample);
+            RECOG.ClassicalGrayboxSample(data);
         fi;
         sample := data.samples[position];
         search.checked := position;
@@ -148,6 +175,7 @@ RECOG.FindPPD := function(data, indices, budget)
         od;
         if found then
             search.witness := position;
+            sample.witness := true;
             return true;
         fi;
     od;
@@ -162,7 +190,7 @@ end;
 # Used for selected classical cases from Babai, Kantor, Palfy and Seress
 # (2002), Section 4.3; these replacements are not ordinary PPDs (Remark 3.3).
 RECOG.DistinguishSmallCases := function(data, power, indices, budget)
-    local parts, k, part, i, order;
+    local parts, k, part, i, order, sample, j;
     parts := [];
     for k in indices do
         part := PrimitivePrimeDivisors(k,data.p).ppds;
@@ -171,13 +199,27 @@ RECOG.DistinguishSmallCases := function(data, power, indices, budget)
         Add(parts,part);
     od;
     for i in [1..budget] do
-        order := RECOG.ProjectiveOrder(PseudoRandom(data.group));
+        sample := RECOG.ClassicalGrayboxOrderSample(data);
+        order := sample.projectiveOrder;
+        for j in [1..Length(indices)] do
+            sample.ppds[indices[j]] := Gcd(order,parts[j]) > 1;
+        od;
         if order mod power = 0 and ForAll(parts,part -> Gcd(order,part) > 1) then
+            sample.witness := true;
             UniteSet(data.invar,indices);
             return true;
         fi;
     od;
     return false;
+end;
+
+# Input: two candidates. Output: true if a should be tested before b.
+# Larger PPD indices first; equal maxima are sorted by group name.
+RECOG.CompareClassicalCandidates := function(a,b)
+    if Maximum(a.allowed) = Maximum(b.allowed) then
+        return a.name < b.name;
+    fi;
+    return Maximum(a.allowed) > Maximum(b.allowed);
 end;
 
 # Prepare PPD tests for the groups returned by RECOG.PossibleDegrees(N,q).
@@ -302,14 +344,7 @@ RECOG.ClassicalCandidates := function(N, q)
         od;
     od;
 
-    # Input: two candidates. Output: true if a should be tested before b.
-    # Larger PPD indices first; equal maxima are sorted by group name.
-    Sort(candidates,function(a,b)
-        if Maximum(a.allowed) = Maximum(b.allowed) then
-            return a.name < b.name;
-        fi;
-        return Maximum(a.allowed) > Maximum(b.allowed);
-    end);
+    Sort(candidates,RECOG.CompareClassicalCandidates);
     return candidates;
 end;
 
@@ -326,15 +361,12 @@ end;
 #   Extends data.samples as needed. The second filter uses ALL stored samples.
 RECOG.RestrictPossibleDegreesByGroup := function(candidates, data, count)
     local i, profile, candidate, remaining, h, degrees, lower,
-          indices, d, rank, seen, rho, bound, g, pol, threshold;
+          indices, d, rank, seen, rho, bound, threshold;
     threshold := 1/1000;
     for i in [1..count] do
         if Length(candidates) <= 1 then break; fi;
         if i > Length(data.samples) then
-            g := PseudoRandom(data.group);
-            pol := CharacteristicPolynomial(data.field,data.field,g);
-            profile := rec(polynomial := pol, degrees := Set(Factors(PolynomialRing(data.field),pol),Degree),ppds := []);
-            Add(data.samples,profile);
+            RECOG.ClassicalGrayboxSample(data);
         fi;
         profile := data.samples[i];
         remaining := [];
@@ -390,15 +422,15 @@ end;
 # Input: G is an absolutely irreducible matrix group with a classical simple
 #   central quotient in defining characteristic p; q=p^f is its group parameter.
 #   The coefficient field of G may be a different finite field of characteristic p.
-# Output: a record with status, name, candidates and samplesUsed.
+# Output: a record with status, name, candidates and elements.
 #   status="probable" and name is a group name if one witnessed candidate remains;
 #   otherwise status="inconclusive" and name=fail. candidates lists the remaining
-#   names. samplesUsed counts polynomial samples, excluding the special tests'
-#   fresh order samples. The recognition uses statistical exclusions.
+#   names. The recognition uses statistical exclusions.
 RECOG.RecogniseClassicalGraybox := function(G, q)
     local N, F, p, f, data, candidates, candidate, required, k,
           answer, result, m, plus, middle, minus, tests, test, remove, u, has,
-          suffix, orders, count, trials, s4, l2, s8, o9, ominus8, indices, power;
+          suffix, orders, count, trials, s4, l2, s8, o9, ominus8, indices, power,
+          gens, sample, element, helperGroup, elements;
     # N is the representation dimension; a candidate's natural degree d may differ.
     # q=p^f is the group parameter, while F is the actual matrix field.
     N := DimensionOfMatrixGroup(G);
@@ -406,12 +438,17 @@ RECOG.RecogniseClassicalGraybox := function(G, q)
     p := Characteristic(F);
     f := LogInt(q,p);
     candidates := RECOG.ClassicalCandidates(N,q);
+    gens := GeneratorsOfGroup(G);
+    if not IsObjWithMemory(gens[1]) then
+        gens := GeneratorsWithMemory(gens);
+    fi;
     # A p-power >= N kills every unipotent Jordan block.
     u := 1; while u < N do u := u*p;od;
     # Share polynomial samples, search results and observed PPD indices (invar).
     data := rec(group := G, field := F, p := p, q := q, Q := Size(F),
         a := DegreeOverPrimeField(F), unipotentBound := u, samples := [],
-        parts := [], searches := rec(), invar := []);
+        parts := [], searches := rec(), invar := [], orderSamples := [],
+        random := ProductReplacer(gens,rec(maxdepth := 400)));
     # First narrow the possible group types using sampled polynomial factor degrees.
     candidates := RECOG.RestrictPossibleDegreesByGroup(candidates,data,30);
 
@@ -508,6 +545,8 @@ RECOG.RecogniseClassicalGraybox := function(G, q)
     # Only in some cases we need the existing order-based tests.
     # Requires the local lietype.gi fixes for retries and collected orders.
     orders := [];
+    helperGroup := Group(gens);
+    elements := [];
     count := 1000;
     trials := 10;
     suffix := Concatenation("(",String(q),")");
@@ -555,7 +594,8 @@ RECOG.RecogniseClassicalGraybox := function(G, q)
     if q > 2 and has("Sp",4,q) and has("SL",2,q^2) then
         s4 := Concatenation("S4",suffix);
         l2 := Concatenation("L2(",String(q^2),")");
-        answer := RECOG.PSLvsPSP(G,[4*f],q,count,trials,orders);
+        answer := RECOG.PSLvsPSP(helperGroup,[4*f],q,count,trials,orders
+            : recogElements := elements);
         if answer = s4 then
             candidates := Filtered(candidates,c -> c.name <> l2);
         elif answer = l2 then
@@ -573,7 +613,8 @@ RECOG.RecogniseClassicalGraybox := function(G, q)
     fi;
 
     if q = 3 and has("Oplus",8,q) and (has("Sp",6,q) or has("Oodd",7,q)) then
-        answer := RECOG.OPlus83vsO73vsSP63(G,orders,count);
+        answer := RECOG.OPlus83vsO73vsSP63(helperGroup,orders,count
+            : recogElements := elements);
         if answer = "O+8(3)" then
             candidates := Filtered(candidates,c -> not c.name in ["S6(3)","O7(3)"]);
         elif answer = "S6(3)" and has("Sp",6,q) then
@@ -590,9 +631,10 @@ RECOG.RecogniseClassicalGraybox := function(G, q)
         # Collect projective orders for the final verification in lietype.gi.
         if IsEmpty(orders) then
             orders := Set(List([1..count],
-            i -> RECOG.LieTypeOrderFunc(PseudoRandom(G))));
+            i -> RECOG.ClassicalGrayboxOrderSample(data).projectiveOrder));
         fi;
-        answer := RECOG.OMinus8vsSPvsO(G,8*f,p,f,orders,count,trials);
+        answer := RECOG.OMinus8vsSPvsO(helperGroup,8*f,p,f,orders,count,trials
+            : recogElements := elements);
         if answer = ominus8 then
             candidates := Filtered(candidates,c -> not c.name in [s8,o9]);
         elif answer = s8 and has("Sp",8,q) then
@@ -608,16 +650,30 @@ RECOG.RecogniseClassicalGraybox := function(G, q)
             # VerifyOrders needs observed projective orders, not an empty list.
             if IsEmpty(orders) then
                 orders := Set(List([1..100],
-                    i -> RECOG.LieTypeOrderFunc(PseudoRandom(G))));
+                    i -> RECOG.ClassicalGrayboxOrderSample(data).projectiveOrder));
             fi;
-            answer := RECOG.DistinguishSpO(G,m,p,f,orders);
+            answer := RECOG.DistinguishSpO(helperGroup,m,p,f,orders
+                : recogElements := elements);
             if ForAny(candidates,c -> c.name = answer) then
                 candidates := Filtered(candidates,c -> c.name = answer);
             fi;
         fi;
     fi;
     result := rec(status := "inconclusive", name := fail,
-        candidates := List(candidates,c -> c.name), samplesUsed := Length(data.samples));
+        candidates := List(candidates,c -> c.name),
+        elements := elements);
+    for sample in Filtered(Concatenation(data.samples,data.orderSamples),
+                          s -> IsBound(s.witness)) do
+        element := rec(el := sample.el, ppds := Positions(sample.ppds,true));
+        if IsBound(sample.polynomial) then
+            element.charpoly := sample.polynomial;
+            element.factors := sample.factors;
+        fi;
+        if IsBound(sample.projectiveOrder) then
+            element.projectiveOrder := sample.projectiveOrder;
+        fi;
+        Add(result.elements,element);
+    od;
     if Length(candidates) = 1 and candidates[1].witnessed then
         result.status := "probable";
         result.name := candidates[1].name;

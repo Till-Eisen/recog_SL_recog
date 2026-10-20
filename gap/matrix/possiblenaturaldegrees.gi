@@ -12,19 +12,8 @@
 # candidate natural degree for that family, such as d=35 for SL(35,q).
 # The natural degree d need not equal the given representation dimension N.
 #
-# The algorithm collects tabulated degrees and small-degree formulae for
-# each type and rank. These are possible dimensions of the tensor factors
-# in Steinberg's decomposition, called building-block degrees below.
-# It tests whether a product of these degrees equals N within the factor limit.
-# If no match is found, complete data exclude the candidate. With incomplete
-# data, missing degrees might still give N, so the candidate remains unresolved.
-#
 # The output may include extra candidates. A retained candidate does not
 # guarantee that a representation of dimension N exists for that group.
-#
-# Data dependencies:
-# DEFREPDATA.g supplies degree-indexed cases through dimension 300.
-# SmallDegreeTables.g supplies degrees by type and rank, with completeness bounds.
 #
 # Mathematical reference:
 # F. Luebeck, Small degree representations of finite Chevalley groups in
@@ -32,6 +21,9 @@
 # (2001), 135--169, revised preprint 2016.
 # https://www.math.rwth-aachen.de/~Frank.Luebeck/preprints/smdegdefchar_v2.pdf
 
+
+
+################################################################################
 # Example: N = 595, q = 3.
 #
 # 1. Initialise the input data and candidate list.
